@@ -1,0 +1,21 @@
+## Interface: 16001
+## Title: Roll Table
+## Notes: Shows who chose Need, Greed or Pass on group loot, and what they rolled.
+## Author: ChristopherK95
+## Version: 1.0.0
+## Category: Loot
+## SavedVariables: RollTableDB
+## IconTexture: Interface\Buttons\UI-GroupLoot-Dice-Up
+## AddonCompartmentFunc: RollTable_OnAddonCompartmentClick
+
+Libs\LibStub\LibStub.lua
+Libs\CallbackHandler-1.0\CallbackHandler-1.0.lua
+Libs\LibDataBroker-1.1\LibDataBroker-1.1.lua
+Libs\LibDBIcon-1.0\LibDBIcon-1.0.lua
+
+Patterns.lua
+Tracker.lua
+Window.lua
+Options.lua
+Test.lua
+Core.lua
