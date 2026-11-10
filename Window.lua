@@ -58,8 +58,10 @@ local function Status(drop)
         end
     end
     if drop.ended then return "|cff808080Ended|r" end
-    if drop.timed then
-        return ("|cffffffff%ds|r"):format(math.max(0, math.ceil(drop.expires - GetTime())))
+    -- Past the countdown the roll is still open until its result arrives.
+    local left = drop.deadline and math.ceil(drop.deadline - GetTime())
+    if left and left > 0 then
+        return ("|cffffffff%ds|r"):format(left)
     end
     return "|cffffffffRolling...|r"
 end

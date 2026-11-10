@@ -6,11 +6,11 @@ ns.drops = drops
 ns.events = {}
 
 local HISTORY_SIZE = 10
--- How long an item without a known timer stays open if its result never shows up.
-local DEFAULT_ROLL_SECONDS = 180
--- How long to wait for the result message once the game says a roll is over.
-local END_GRACE = 5
--- Results can arrive just after a roll times out; they still belong to that item.
+-- A roll ends only when its result arrives (a winner, or everyone passed); the game
+-- auto-passes anyone who hasn't chosen in time. This is just a safety net for a result that
+-- never reaches us, such as after zoning out mid-roll.
+local GIVE_UP_SECONDS = 600
+-- Late messages about an item that has just finished still belong to it.
 local LATE_RESULT_SECONDS = 10
 -- How far apart the loot history and the chat can report the same item.
 local MATCH_SECONDS = 300
@@ -105,14 +105,9 @@ end
 
 local function Tick()
     local now, active = GetTime(), false
-    local historyNow = C_LootHistory and C_LootHistory.GetLootHistoryTime and C_LootHistory.GetLootHistoryTime()
     for _, drop in ipairs(drops) do
         if not drop.ended then
-            if drop.historyEnd and historyNow and historyNow >= drop.historyEnd then
-                drop.historyEnd = nil
-                drop.expires = math.min(drop.expires, now + END_GRACE)
-            end
-            if now >= drop.expires then
+            if now - drop.started >= GIVE_UP_SECONDS then
                 EndDrop(drop)
             else
                 active = true
@@ -134,12 +129,11 @@ function ns.ActiveCount()
     return count
 end
 
--- Starts tracking an item. With seconds, the roll's real length is known and is shown.
+-- Starts tracking an item. With seconds, the roll's length is known and a countdown is shown.
 function ns.NewDrop(link, seconds)
     local drop = {
         link = link, itemID = ItemID(link), rolls = {},
-        started = GetTime(), expires = GetTime() + (seconds or DEFAULT_ROLL_SECONDS),
-        timed = seconds ~= nil,
+        started = GetTime(), deadline = seconds and GetTime() + seconds,
     }
     drops[#drops + 1] = drop
     Trim()
@@ -207,18 +201,12 @@ function ns.events.START_LOOT_ROLL(rollID, rollTime)
     -- Another source may have reported this item a moment earlier.
     local drop = Find(ItemID(link), function(d) return not d.ended and not d.rollID and now - d.started < 5 end)
     if drop then
-        drop.expires, drop.timed = now + seconds, true
+        drop.deadline = now + seconds
     else
         drop = ns.NewDrop(link, seconds)
     end
     drop.rollID = rollID
     ns.Changed()
-end
-
--- The game closes the popup when the roll is over; the result message follows shortly.
-function ns.events.CANCEL_LOOT_ROLL(rollID)
-    local drop = FindAny(function(d) return d.rollID == rollID and not d.ended end)
-    if drop then drop.expires = math.min(drop.expires, GetTime() + END_GRACE) end
 end
 
 local STATE_CHOICE = {}
@@ -241,9 +229,6 @@ function ns.events.LOOT_HISTORY_UPDATE_DROP(encounterID, lootListKey)
         or Find(ItemID(info.itemHyperlink), function(d) return not d.historyKey and now - d.started < MATCH_SECONDS end)
         or ns.NewDrop(info.itemHyperlink)
     drop.historyKey = key
-    if not drop.ended and info.duration and info.duration > 0 then
-        drop.historyEnd = info.startTime + info.duration
-    end
     for _, roll in ipairs(info.rollInfos or {}) do
         local choice = STATE_CHOICE[roll.state]
         if choice then
