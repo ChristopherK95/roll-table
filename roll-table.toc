@@ -2,7 +2,8 @@
 ## Title: Roll Table
 ## Notes: Shows who chose Need, Greed or Pass on group loot, and what they rolled.
 ## Author: ChristopherK95
-## Version: 1.0.0
+## X-Curse-Project-ID: 1803728
+## Version: @project-version@
 ## Category: Loot
 ## SavedVariables: RollTableDB
 ## IconTexture: Interface\Buttons\UI-GroupLoot-Dice-Up

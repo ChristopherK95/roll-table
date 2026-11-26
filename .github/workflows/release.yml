@@ -1,0 +1,23 @@
+name: Release
+
+# Pushing a version tag (such as v1.1.0) builds the addon zip and uploads it to CurseForge and
+# to a GitHub release. CurseForge needs the CF_API_KEY repository secret and the project's
+# X-Curse-Project-ID line in roll-table.toc.
+on:
+  push:
+    tags:
+      - "v*"
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    env:
+      CF_API_KEY: ${{ secrets.CF_API_KEY }}
+      GITHUB_OAUTH: ${{ secrets.GITHUB_TOKEN }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: BigWigsMods/packager@v2
