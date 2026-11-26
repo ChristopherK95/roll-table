@@ -22,6 +22,20 @@ function ns.CreateOptions()
         return container:GetData()
     end, "Minimal is a plain dark box. Blizzard looks like the game's own windows, such as Professions.")
 
+    local autoOpen = Proxy("autoOpen", Settings.VarType.String, "Auto-open", "always")
+    Settings.CreateDropdown(category, autoOpen, function()
+        local container = Settings.CreateControlTextContainer()
+        container:Add("always", "Always")
+        container:Add("instance", "In dungeons and raids")
+        container:Add("offered", "Items I can roll on")
+        container:Add("never", "Never")
+        return container:GetData()
+    end, "When a roll starts, open the window. You can always open it yourself with /rolltable.")
+
+    local combat = Proxy("waitForCombat", Settings.VarType.Boolean, "Wait until out of combat", false)
+    Settings.CreateCheckbox(category, combat,
+        "A roll that starts in combat opens the window once combat ends, instead of straight away.")
+
     local delay = Proxy("closeDelay", Settings.VarType.Number, "Auto-close delay", 30)
     local delayOptions = Settings.CreateSliderOptions(0, 120, 5)
     delayOptions:SetLabelFormatter(MinimalSliderWithSteppersMixin.Label.Right, function(value)
@@ -30,8 +44,8 @@ function ns.CreateOptions()
     Settings.CreateSlider(category, delay, delayOptions,
         "How long the window stays open after the last roll ends. 0 keeps it open.")
 
-    local locked = Proxy("locked", Settings.VarType.Boolean, "Lock position", false)
-    Settings.CreateCheckbox(category, locked, "Stops the window from being dragged.")
+    local locked = Proxy("locked", Settings.VarType.Boolean, "Lock window", false, ns.ApplySettings)
+    Settings.CreateCheckbox(category, locked, "Stops the window from being moved or resized.")
 
     local scale = Proxy("scale", Settings.VarType.Number, "Scale", 1, ns.ApplySettings)
     local scaleOptions = Settings.CreateSliderOptions(0.5, 2, 0.05)

@@ -129,16 +129,55 @@ function ns.ActiveCount()
     return count
 end
 
+function ns.IsPlayer(name)
+    return UnitIs("player", name)
+end
+
+-- Everyone in the group who hasn't chosen on this item yet, sorted by name.
+function ns.WaitingOn(drop)
+    local list = {}
+    if drop.ended then return list end
+    local function Add(name, class)
+        local entry = GetEntry(drop, name)
+        if not (entry and entry.choice) then list[#list + 1] = { name = name, class = class } end
+    end
+    if drop.testRoster then
+        for name, class in pairs(drop.testRoster) do Add(name, class) end
+    elseif IsInGroup() then
+        -- The raid units include the player; the party units don't.
+        local units = {}
+        if IsInRaid() then
+            for i = 1, GetNumGroupMembers() do units[#units + 1] = "raid" .. i end
+        else
+            units[1] = "player"
+            for i = 1, GetNumSubgroupMembers() do units[#units + 1] = "party" .. i end
+        end
+        for _, unit in ipairs(units) do
+            if UnitExists(unit) then
+                Add(ShortName(GetUnitName(unit, true)), select(2, UnitClass(unit)))
+            end
+        end
+    end
+    table.sort(list, function(a, b) return a.name < b.name end)
+    return list
+end
+
 -- Starts tracking an item. With seconds, the roll's length is known and a countdown is shown.
-function ns.NewDrop(link, seconds)
+-- An old drop is one that was already over when we first heard of it: it goes into the
+-- history without opening the window, and is too old to take any chat message.
+function ns.NewDrop(link, seconds, old)
     local drop = {
         link = link, itemID = ItemID(link), rolls = {},
-        started = GetTime(), deadline = seconds and GetTime() + seconds,
+        started = old and -math.huge or GetTime(), deadline = seconds and GetTime() + seconds,
     }
-    drops[#drops + 1] = drop
+    if old then
+        table.insert(drops, 1, drop)
+    else
+        drops[#drops + 1] = drop
+    end
     Trim()
     if not ticker then ticker = C_Timer.NewTicker(1, Tick) end
-    ns.OnDropStarted(drop)
+    if not old then ns.OnDropStarted(drop) end
     return drop
 end
 
@@ -206,6 +245,8 @@ function ns.events.START_LOOT_ROLL(rollID, rollTime)
         drop = ns.NewDrop(link, seconds)
     end
     drop.rollID = rollID
+    -- Now known to be offered to us, which can matter for opening the window.
+    ns.AutoOpen(drop)
     ns.Changed()
 end
 
@@ -225,9 +266,13 @@ function ns.events.LOOT_HISTORY_UPDATE_DROP(encounterID, lootListKey)
     if not info or not info.itemHyperlink then return end
     local key = encounterID .. ":" .. lootListKey
     local now = GetTime()
+    local finished = info.winner ~= nil or info.allPassed
     local drop = FindAny(function(d) return d.historyKey == key end)
         or Find(ItemID(info.itemHyperlink), function(d) return not d.historyKey and now - d.started < MATCH_SECONDS end)
-        or ns.NewDrop(info.itemHyperlink)
+    -- A drop that is already over the first time we hear of it is old news, such as the loot
+    -- history after a reload.
+    local old = not drop and finished
+    drop = drop or ns.NewDrop(info.itemHyperlink, nil, old)
     drop.historyKey = key
     for _, roll in ipairs(info.rollInfos or {}) do
         local choice = STATE_CHOICE[roll.state]
@@ -239,8 +284,10 @@ function ns.events.LOOT_HISTORY_UPDATE_DROP(encounterID, lootListKey)
             if roll.isWinner then entry.winner = true end
         end
     end
-    if info.winner or info.allPassed then
+    if finished then
         EndDrop(drop, info.allPassed)
+        -- Too long ago for late chat messages to belong to it.
+        if old then drop.endedAt = -math.huge end
     end
     ns.Changed()
 end

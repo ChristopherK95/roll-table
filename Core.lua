@@ -1,6 +1,8 @@
 local ADDON, ns = ...
 
 local DEFAULTS = {
+    autoOpen = "always",
+    waitForCombat = false,
     closeDelay = 30,
     locked = false,
     scale = 1,
@@ -15,6 +17,7 @@ local function OnLoad()
         if RollTableDB[key] == nil then RollTableDB[key] = value end
     end
     RollTableDB.minimap = RollTableDB.minimap or { hide = false }
+    RollTableDB.size = RollTableDB.size or {}
     ns.db = RollTableDB
 
     ns.CreateWindow()

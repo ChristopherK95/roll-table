@@ -1,6 +1,9 @@
 local _, ns = ...
 
+-- How tall the window may grow until the player resizes it, and the limits of resizing.
 local MAX_HEIGHT = 400
+local MIN_WIDTH, MAX_WIDTH = 220, 600
+local MIN_HEIGHT, MAX_RESIZE_HEIGHT = 60, 1000
 
 -- The two looks the window can take. Sizes are in pixels; fonts are the game's font objects.
 local STYLES = {
@@ -25,16 +28,20 @@ local CHOICE_LABEL = {
     greed = "|TInterface\\Buttons\\UI-GroupLoot-Coin-Up:14:14|t",
     pass = "|cff808080" .. (PASS or "Pass") .. "|r",
 }
+local CHOICE_NAME = { need = NEED or "Need", greed = GREED or "Greed", pass = PASS or "Pass" }
 local WINNER_ICON = "Interface\\RaidFrame\\ReadyCheck-Ready"
 local UNKNOWN_ICON = "Interface\\Icons\\INV_Misc_QuestionMark"
 local PORTRAIT_ICON = "Interface\\Icons\\INV_Misc_Dice_02"
 
-local frame, scroll, content, thumb, emptyText
+local frame, scroll, content, thumb, emptyText, grip
 local minimalChrome, blizzardChrome
-local style = STYLES.minimal
+local style, styleName = STYLES.minimal, "minimal"
 local headers, rows, sections = {}, {}, {}
 local autoOpened = false
 local closeTimer
+local resizing = false
+-- A roll wanted the window open during combat, with the setting to wait until after it.
+local heldForCombat = false
 
 local function ColorName(entry)
     local color = entry.class and RAID_CLASS_COLORS[entry.class]
@@ -149,6 +156,12 @@ local function GetRow(index)
     if row then return row end
 
     row = CreateFrame("Frame", nil, content)
+    row:EnableMouse(true)
+
+    -- Marks the player's own row.
+    row.mine = row:CreateTexture(nil, "BACKGROUND")
+    row.mine:SetAllPoints()
+    row.mine:SetColorTexture(1, 0.82, 0, 0.1)
 
     row.roll = row:CreateFontString(nil, "OVERLAY")
     row.roll:SetPoint("RIGHT", -2, 0)
@@ -165,6 +178,29 @@ local function GetRow(index)
     row.name:SetPoint("RIGHT", row.choice, "LEFT", -4, 0)
     row.name:SetJustifyH("LEFT")
     row.name:SetWordWrap(false)
+
+    -- Used instead of the columns for a line of text that may wrap, like who we're waiting on.
+    row.note = row:CreateFontString(nil, "OVERLAY")
+    row.note:SetJustifyH("LEFT")
+    row.note:SetJustifyV("TOP")
+    row.note:SetWordWrap(true)
+
+    row:SetScript("OnEnter", function(self)
+        local entry, waiting = self.entry, self.waiting
+        if not (entry or waiting) then return end
+        GameTooltip:SetOwner(self, "ANCHOR_LEFT")
+        if entry then
+            GameTooltip:AddLine(ColorName(entry))
+            GameTooltip:AddLine(CHOICE_NAME[entry.choice], 1, 1, 1)
+            if entry.roll then GameTooltip:AddLine("Rolled " .. entry.roll, 1, 1, 1) end
+            if entry.winner then GameTooltip:AddLine("Won", 0.1, 1, 0.1) end
+        else
+            GameTooltip:AddLine("Waiting on")
+            for _, player in ipairs(waiting) do GameTooltip:AddLine(ColorName(player)) end
+        end
+        GameTooltip:Show()
+    end)
+    row:SetScript("OnLeave", GameTooltip_Hide)
 
     rows[index] = row
     return row
@@ -201,9 +237,37 @@ local function PlaceRow(row, y, width)
     row.name:ClearAllPoints()
     row.name:SetPoint("LEFT", style.indent, 0)
     row.name:SetPoint("RIGHT", row.choice, "LEFT", -4, 0)
-    for _, text in ipairs({ row.roll, row.choice, row.name }) do
+    for _, text in ipairs({ row.roll, row.choice, row.name, row.note }) do
         text:SetFontObject(style.rowFont)
     end
+end
+
+-- Fills a row with one player's choice and roll.
+local function ShowEntry(row, entry)
+    row.entry, row.waiting = entry, nil
+    row.name:SetText(ColorName(entry))
+    row.choice:SetText(CHOICE_LABEL[entry.choice])
+    row.roll:SetText(entry.roll and (entry.winner and "|cffffd100" .. entry.roll .. "|r" or entry.roll) or "")
+    row.winner:SetShown(entry.winner == true)
+    row.mine:SetShown(ns.IsPlayer(entry.name))
+    row.note:Hide()
+    return style.rowHeight
+end
+
+-- Fills a row with a line of text instead of the columns. Returns the height it needs.
+local function ShowNote(row, text, width, waiting)
+    row.entry, row.waiting = nil, waiting
+    for _, part in ipairs({ row.name, row.choice, row.roll }) do part:SetText("") end
+    row.winner:Hide()
+    row.mine:Hide()
+    row.note:ClearAllPoints()
+    row.note:SetPoint("TOPLEFT", style.indent, -(style.rowHeight - row.note:GetLineHeight()) / 2)
+    row.note:SetWidth(width - style.indent - 4)
+    row.note:SetText(text)
+    row.note:Show()
+    local height = math.max(style.rowHeight, row.note:GetStringHeight() + style.rowHeight - row.note:GetLineHeight())
+    row:SetHeight(height)
+    return height
 end
 
 function ns.Refresh()
@@ -235,23 +299,24 @@ function ns.Refresh()
                 rowCount = rowCount + 1
                 local row = GetRow(rowCount)
                 PlaceRow(row, y, width)
-                row.name:SetText(ColorName(entry))
-                row.choice:SetText(CHOICE_LABEL[entry.choice])
-                row.roll:SetText(entry.roll and (entry.winner and "|cffffd100" .. entry.roll .. "|r" or entry.roll) or "")
-                row.winner:SetShown(entry.winner == true)
+                y = y + ShowEntry(row, entry)
                 row:Show()
-                y = y + style.rowHeight
             end
-            if #list == 0 then
+            local waiting = ns.WaitingOn(drop)
+            local note
+            if #waiting > 0 then
+                local names = {}
+                for i, player in ipairs(waiting) do names[i] = ColorName(player) end
+                note = "|cff808080Waiting on:|r " .. table.concat(names, ", ")
+            elseif #list == 0 then
+                note = "|cff808080Waiting for choices...|r"
+            end
+            if note then
                 rowCount = rowCount + 1
                 local row = GetRow(rowCount)
                 PlaceRow(row, y, width)
-                row.name:SetText("|cff808080Waiting for choices...|r")
-                row.choice:SetText("")
-                row.roll:SetText("")
-                row.winner:Hide()
+                y = y + ShowNote(row, note, width, #waiting > 0 and waiting or nil)
                 row:Show()
-                y = y + style.rowHeight
             end
         end
 
@@ -281,7 +346,12 @@ function ns.Refresh()
     emptyText:SetShown(empty)
     if empty then y = 20 end
     content:SetHeight(y)
-    frame:SetHeight(math.max(style.minHeight or 0, math.min(style.top + y + style.bottom, MAX_HEIGHT)))
+    -- While the player drags the size grip, the window takes the height they drag it to.
+    if not resizing then
+        local size = ns.db.size[styleName]
+        local maxHeight = size and size.height or MAX_HEIGHT
+        frame:SetHeight(math.max(style.minHeight or 0, math.min(style.top + y + style.bottom, maxHeight)))
+    end
     UpdateThumb()
 end
 
@@ -328,8 +398,41 @@ function ns.ToggleWindow()
     end
 end
 
-function ns.OnDropStarted()
+-- Whether the auto-open setting wants the window open for this roll.
+local function WantsOpen(drop)
+    if drop.ended then return false end
+    local mode = ns.db.autoOpen
+    if mode == "never" then return false end
+    if mode == "instance" then
+        local _, kind = IsInInstance()
+        return kind == "party" or kind == "raid"
+    end
+    if mode == "offered" then return drop.rollID ~= nil end
+    return true
+end
+
+function ns.AutoOpen(drop)
+    if not WantsOpen(drop) then return end
+    if ns.db.waitForCombat and InCombatLockdown() then
+        heldForCombat = true
+        return
+    end
     ns.ShowWindow(true)
+end
+
+function ns.events.PLAYER_REGEN_ENABLED()
+    if not heldForCombat then return end
+    heldForCombat = false
+    for _, drop in ipairs(ns.drops) do
+        if WantsOpen(drop) then
+            ns.ShowWindow(true)
+            return
+        end
+    end
+end
+
+function ns.OnDropStarted(drop)
+    ns.AutoOpen(drop)
 end
 
 function ns.OnDropEnded()
@@ -341,16 +444,32 @@ function ns.OnDropEnded()
     end)
 end
 
+-- Anchors the window by its top left corner, so it grows and shrinks downwards, and saves that.
+local function SavePosition()
+    frame:SetUserPlaced(false)
+    local left, top = frame:GetLeft(), frame:GetTop()
+    if not (left and top) then return end
+    frame:ClearAllPoints()
+    frame:SetPoint("TOPLEFT", UIParent, "BOTTOMLEFT", left, top)
+    ns.db.point = { "TOPLEFT", "BOTTOMLEFT", left, top }
+end
+
 function ns.ApplySettings()
-    style = STYLES[ns.db.style] or STYLES.minimal
+    styleName = STYLES[ns.db.style] and ns.db.style or "minimal"
+    style = STYLES[styleName]
     minimalChrome:SetShown(style == STYLES.minimal)
     blizzardChrome:SetShown(style == STYLES.blizzard)
 
-    frame:SetWidth(style.width)
+    -- Each look remembers its own size.
+    local size = ns.db.size[styleName]
+    local width = size and size.width or style.width
+    frame:SetWidth(width)
+    frame:SetResizeBounds(MIN_WIDTH, math.max(MIN_HEIGHT, style.minHeight or 0), MAX_WIDTH, MAX_RESIZE_HEIGHT)
+    grip:SetShown(not ns.db.locked)
     scroll:ClearAllPoints()
     scroll:SetPoint("TOPLEFT", style.side, -style.top)
     scroll:SetPoint("BOTTOMRIGHT", -style.side, style.bottom)
-    content:SetWidth(style.width - style.side * 2)
+    content:SetWidth(width - style.side * 2)
     emptyText:SetPoint("TOPLEFT", style.inset + 2, -4)
 
     frame:SetScale(ns.db.scale)
@@ -417,11 +536,23 @@ function ns.CreateWindow()
     end)
     frame:SetScript("OnDragStop", function(self)
         self:StopMovingOrSizing()
-        self:SetUserPlaced(false)
-        local point, _, relativePoint, x, y = self:GetPoint()
-        ns.db.point = { point, relativePoint, x, y }
+        SavePosition()
+    end)
+    frame:SetResizable(true)
+    frame:SetScript("OnSizeChanged", function(_, width)
+        content:SetWidth(width - style.side * 2)
+        if resizing then ns.Refresh() end
+    end)
+    frame:SetScript("OnHide", function(self)
+        CancelClose()
+        if resizing then
+            resizing = false
+            self:StopMovingOrSizing()
+        end
     end)
     frame:Hide()
+    -- Escape closes it, like the game's own windows.
+    tinsert(UISpecialFrames, frame:GetName())
 
     minimalChrome = CreateMinimalChrome()
     blizzardChrome = CreateBlizzardChrome()
@@ -452,6 +583,28 @@ function ns.CreateWindow()
     thumb:SetColorTexture(1, 1, 1, 0.25)
     thumb:SetWidth(3)
     thumb:Hide()
+
+    -- Dragging the grip sets the width, and how tall the window may grow.
+    grip = CreateFrame("Button", nil, frame)
+    grip:SetSize(14, 14)
+    grip:SetPoint("BOTTOMRIGHT", -2, 2)
+    grip:SetFrameLevel(scroll:GetFrameLevel() + 2)
+    grip:SetNormalTexture("Interface\\ChatFrame\\UI-ChatIM-SizeGrabber-Up")
+    grip:SetHighlightTexture("Interface\\ChatFrame\\UI-ChatIM-SizeGrabber-Highlight")
+    grip:SetPushedTexture("Interface\\ChatFrame\\UI-ChatIM-SizeGrabber-Down")
+    grip:SetScript("OnMouseDown", function(_, button)
+        if button ~= "LeftButton" or ns.db.locked then return end
+        resizing = true
+        frame:StartSizing("BOTTOMRIGHT")
+    end)
+    grip:SetScript("OnMouseUp", function()
+        if not resizing then return end
+        resizing = false
+        frame:StopMovingOrSizing()
+        ns.db.size[styleName] = { width = math.floor(frame:GetWidth() + 0.5), height = math.floor(frame:GetHeight() + 0.5) }
+        SavePosition()
+        ns.Refresh()
+    end)
 
     emptyText = content:CreateFontString(nil, "OVERLAY", "GameFontDisableSmall")
     emptyText:SetText("No rolls yet.")
